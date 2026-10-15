@@ -1742,6 +1742,13 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     scheduler_output.aux_output_connector_metadata
                 )
             if scheduler_output.total_num_scheduled_tokens == 0:
+                if (
+                    self.parallel_config.distributed_executor_backend
+                    == "external_launcher"
+                    and self.dp_size > 1
+                ):
+                    # Join the DP sync the other ranks enter in their forward.
+                    self._dummy_run(self.decode_query_len, uniform_decode=True)
                 # No need to run the model.
                 empty_output = self.kv_connector.no_forward(scheduler_output)
                 return self._merge_ec_connector_no_forward(

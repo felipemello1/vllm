@@ -33,21 +33,29 @@ prompts = [
     "The capital of France is",
     "The future of AI is",
 ] * 10
+tp_size = int(os.getenv("TP_SIZE", "1"))
+pp_size = int(os.getenv("PP_SIZE", "1"))
 dp_size = int(os.getenv("DP_SIZE", "1"))
-dp_rank = int(os.getenv("DP_RANK", "0"))
+# vLLM derives the same DP rank under external_launcher.
+dp_rank = dist.get_rank() // (tp_size * pp_size)
 
 if dp_size > 1:
     # distribute the prompts across the data parallel ranks
     prompts = [prompt for idx, prompt in enumerate(prompts) if idx % dp_size == dp_rank]
 
-sampling_params = SamplingParams(temperature=0.8, top_p=0.95)
+# Give each DP rank a different length so ranks finish on different steps: a
+# rank with unfinished requests can then schedule 0 tokens while its peers run.
+sampling_params = SamplingParams(
+    temperature=0.8, top_p=0.95, max_tokens=16 * (dp_rank + 1), ignore_eos=True
+)
 
 # set different `gpu_memory_utilization` for different ranks,
 # to test if all ranks agree on the same kv cache configuration.
 llm = LLM(
     model="microsoft/Phi-mini-MoE-instruct",
-    tensor_parallel_size=int(os.getenv("TP_SIZE", "1")),
-    pipeline_parallel_size=int(os.getenv("PP_SIZE", "1")),
+    tensor_parallel_size=tp_size,
+    pipeline_parallel_size=pp_size,
+    data_parallel_size=dp_size,
     enable_expert_parallel=int(os.getenv("ENABLE_EP", "0")) == 1,
     distributed_executor_backend="external_launcher",
     gpu_memory_utilization=random.uniform(0.8, 0.92),

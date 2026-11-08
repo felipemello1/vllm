@@ -2,6 +2,8 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """Attention layer with FlashAttention."""
 
+from dataclasses import replace
+
 import torch
 
 from vllm.logger import init_logger
@@ -18,7 +20,7 @@ from vllm.v1.attention.backends.fa_utils import (
 from vllm.v1.attention.ops.triton_reshape_and_cache_flash import (
     triton_reshape_and_cache_flash_diffkv,
 )
-from vllm.v1.kv_cache_interface import is_quantized_kv_cache
+from vllm.v1.kv_cache_interface import AttentionSpec, is_quantized_kv_cache
 
 if is_flash_attn_varlen_func_available():
     from vllm.v1.attention.backends.fa_utils import flash_attn_varlen_func
@@ -43,6 +45,11 @@ class FlashAttentionDiffKVBackend(FlashAttentionBackend):
     @classmethod
     def set_head_size_v(cls, head_size_v: int) -> None:
         cls.head_size_v = head_size_v
+
+    @classmethod
+    def customize_spec(cls, spec: AttentionSpec) -> AttentionSpec:
+        """Set V's head size, which specs built from the model config lack."""
+        return super().customize_spec(replace(spec, head_size_v=cls.head_size_v))
 
     @classmethod
     def is_supported_on_current_device(

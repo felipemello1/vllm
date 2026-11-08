@@ -16,12 +16,18 @@ from vllm.multimodal.inputs import MultiModalFeatureSpec, PlaceholderRange
 from vllm.platforms import current_platform
 from vllm.platforms.interface import Platform
 from vllm.v1.attention.backend import MultipleOf
+from vllm.v1.attention.backends.flash_attn_diffkv import FlashAttentionDiffKVBackend
 from vllm.v1.attention.backends.mla.indexer import DeepseekV32IndexerBackend
 from vllm.v1.attention.backends.mla.rocm_aiter_mla_sparse import (
     ROCMAiterMLASparseBackend,
 )
 from vllm.v1.attention.backends.registry import MambaAttentionBackendEnum
-from vllm.v1.kv_cache_interface import KVCacheSpec, get_block_table_width
+from vllm.v1.attention.backends.triton_attn_diffkv import TritonAttentionDiffKVBackend
+from vllm.v1.kv_cache_interface import (
+    FullAttentionSpec,
+    KVCacheSpec,
+    get_block_table_width,
+)
 from vllm.v1.worker.gpu.lora_utils import LoraState
 from vllm.v1.worker.gpu.mm.encoder_cache import EncoderCache
 from vllm.v1.worker.gpu.mm.lora import set_active_mm_loras
@@ -220,6 +226,30 @@ def test_blocks_land_on_the_mamba_checkpoint_grid(
     cache_config = _align_qwen3_5_blocks(*prefill_checkpoint_alignments)
 
     assert cache_config.block_size == block_size
+
+
+@pytest.mark.parametrize(
+    "backend_cls", [FlashAttentionDiffKVBackend, TritonAttentionDiffKVBackend]
+)
+def test_hybrid_mamba_page_matches_diffkv_attention_page(monkeypatch, backend_cls):
+    """Hybrid alignment pads the mamba page to the attention layer's page,
+    which DiffKV sizes with the backend's V head size (128; K's is 256)."""
+    from tests.v1.attention.utils import create_vllm_config
+
+    monkeypatch.setattr(backend_cls, "head_size_v", 128)
+    vllm_config = create_vllm_config(model_name="Qwen/Qwen3.5-0.8B")
+    Platform._align_hybrid_block_size(vllm_config, backend_cls)
+
+    model_config = vllm_config.model_config
+    cache_config = vllm_config.cache_config
+    attention_layer_spec = FullAttentionSpec(
+        block_size=cache_config.block_size,
+        num_kv_heads=model_config.get_num_kv_heads(vllm_config.parallel_config),
+        head_size=model_config.get_head_size(),
+        head_size_v=128,
+        dtype=model_config.dtype,
+    )
+    assert cache_config.mamba_page_size_padded == attention_layer_spec.page_size_bytes
 
 
 def test_xpu_gdn_rounding_rejected_by_a_sibling_backend_raises(monkeypatch):

@@ -7,6 +7,7 @@ are packed along the last dim in the logical shape
 `[num_blocks, num_kv_heads, block_size, head_size_qk + head_size_v]`.
 """
 
+from dataclasses import replace
 from typing import ClassVar
 
 import torch
@@ -83,6 +84,11 @@ class TritonAttentionDiffKVBackend(TritonAttentionBackend):
     @classmethod
     def set_head_size_v(cls, head_size_v: int) -> None:
         cls.head_size_v = head_size_v
+
+    @classmethod
+    def customize_spec(cls, spec: AttentionSpec) -> AttentionSpec:
+        """Set V's head size, which specs built from the model config lack."""
+        return super().customize_spec(replace(spec, head_size_v=cls.head_size_v))
 
     @staticmethod
     def get_name() -> str:
